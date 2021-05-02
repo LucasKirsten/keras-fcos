@@ -165,7 +165,8 @@ def evaluate(
         score_threshold=0.05,
         max_detections=100,
         save_path=None,
-        epoch=0
+        epoch=0,
+        method='iou'
 ):
     """
     Evaluate a given dataset using a given model.
@@ -183,6 +184,11 @@ def evaluate(
         A dict mapping class names to mAP scores.
 
     """
+    if method=='iou':
+        from utils.compute_overlap import compute_overlap
+    elif method=='piou':
+        from utils.compute_overlap_piou import compute_overlap
+    
     # gather all detections and annotations
     all_detections = _get_detections(generator, model, score_threshold=score_threshold, max_detections=max_detections,
                                      save_path=save_path)
@@ -250,6 +256,124 @@ def evaluate(
         # compute average precision
         average_precision = _compute_ap(recall, precision)
         average_precisions[label] = average_precision, num_annotations
+
+    return average_precisions
+
+def evaluate_mAP(
+        generator,
+        model,
+        method='iou',
+        start_threshold=0.5,
+        score_threshold=0.01,
+        max_detections=100,
+        visualize=False,
+        epoch=0
+):
+    """
+    Evaluate a given dataset using a given model for mAPstart_threshold:0.95.
+    Args:
+        generator: The generator that represents the dataset to evaluate.
+        model: The model to evaluate.
+        iou_threshold: The threshold used to consider when a detection is positive or negative.
+        score_threshold: The score confidence threshold to use for detections.
+        max_detections: The maximum number of detections to use per image.
+        visualize: Show the visualized detections or not.
+    Returns:
+        A dict mapping class names to mAP scores.
+    """
+    if method=='iou':
+        from utils.compute_overlap import compute_overlap
+    elif method=='piou':
+        from utils.compute_overlap_piou import compute_overlap
+    
+    # gather all detections and annotations
+    all_detections = _get_detections(generator, model, score_threshold=score_threshold, max_detections=max_detections)
+    all_annotations = _get_annotations(generator)
+    average_precisions = {}
+    num_tp = 0
+    num_fp = 0
+
+    # process detections and annotations
+    for iou_threshold in np.arange(start_threshold,1.0, step=0.05):
+        for label in progressbar.progressbar(range(generator.num_classes()), prefix=f'Evaluating threshold {iou_threshold:.2f}: '):
+            if not generator.has_label(label):
+                continue
+
+            false_positives = np.zeros((0,))
+            true_positives = np.zeros((0,))
+            scores = np.zeros((0,))
+            num_annotations = 0.0
+
+            for i in range(generator.size()):
+                detections = all_detections[i][label]
+                annotations = all_annotations[i][label]
+                num_annotations += annotations.shape[0]
+                detected_annotations = []
+
+                for d in detections:
+                    scores = np.append(scores, d[4])
+
+                    if annotations.shape[0] == 0:
+                        false_positives = np.append(false_positives, 1)
+                        true_positives = np.append(true_positives, 0)
+                        continue
+                    overlaps = compute_overlap(np.expand_dims(d, axis=0), annotations)
+                    assigned_annotation = np.argmax(overlaps, axis=1)
+                    max_overlap = overlaps[0, assigned_annotation]
+
+                    if max_overlap >= iou_threshold and assigned_annotation not in detected_annotations:
+                        false_positives = np.append(false_positives, 0)
+                        true_positives = np.append(true_positives, 1)
+                        detected_annotations.append(assigned_annotation)
+                    else:
+                        false_positives = np.append(false_positives, 1)
+                        true_positives = np.append(true_positives, 0)
+
+            # no annotations -> AP for this class is 0 (is this correct?)
+            if num_annotations == 0:
+                average_precisions[label] = 0, 0
+                continue
+
+            # sort by score
+            indices = np.argsort(-scores)
+            false_positives = false_positives[indices]
+            true_positives = true_positives[indices]
+
+            # compute false positives and true positives
+            false_positives = np.cumsum(false_positives)
+            true_positives = np.cumsum(true_positives)
+
+            if false_positives.shape[0] == 0:
+                num_fp += 0
+            else:
+                num_fp += false_positives[-1]
+            if true_positives.shape[0] == 0:
+                num_tp += 0
+            else:
+                num_tp += true_positives[-1]
+
+            # compute recall and precision
+            recall = true_positives / num_annotations
+            precision = true_positives / np.maximum(true_positives + false_positives, np.finfo(np.float64).eps)
+
+            # store precision for give threshold
+            average_precision = _compute_ap(recall, precision)
+            if not (label in average_precisions):
+                average_precisions[label] = {'map':[], 'ann':[]}
+            average_precisions[label]['map'].append([average_precision])
+            average_precisions[label]['ann'].append([num_annotations])
+        
+        # average precision for the given iou threshold
+        ap_iou = [average_precisions[label]['map'][-1] for label in average_precisions]
+        print(f'AP{iou_threshold:.2f} = {np.mean(ap_iou):.4f}')
+    
+    # compute average precision
+    for label in average_precisions:
+        average_precision = average_precisions[label]['map']
+        num_annotations = average_precisions[label]['ann']
+        average_precisions[label] = (np.mean(average_precision), np.mean(num_annotations))
+        
+    print('num_fp={}, num_tp={}'.format(num_fp, num_tp))
 
     return average_precisions
 

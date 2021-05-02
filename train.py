@@ -23,6 +23,7 @@ import warnings
 
 import keras
 import keras.preprocessing.image
+from keras.utils import multi_gpu_model
 import tensorflow as tf
 from datetime import date
 
@@ -39,6 +40,12 @@ from utils.model import freeze as freeze_model
 from utils.transform import random_transform_generator
 from utils.image import random_visual_effect_generator
 
+def seed_everything(seed=33):
+    import os, tensorflow as tf, numpy as np
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    tf.set_random_seed(seed)
+seed_everything()
 
 def makedirs(path):
     # Intended behavior: try to create the directory,
@@ -74,7 +81,7 @@ def model_with_weights(model, weights, skip_mismatch):
     return model
 
 
-def create_models(backbone_retinanet, num_classes, weights, num_gpus=0, freeze_backbone=False, lr=1e-5, config=None):
+def create_models(backbone_retinanet, num_classes, weights, args, num_gpus=0, freeze_backbone=False, lr=1e-5, config=None):
     """
     Creates three models (model, training_model, prediction_model).
 
@@ -113,7 +120,7 @@ def create_models(backbone_retinanet, num_classes, weights, num_gpus=0, freeze_b
     # compile model
     training_model.compile(
         loss={
-            'regression': losses.iou(),
+            'regression': losses.iou_loss(args.loss, args.loss_weight),
             'classification': losses.focal(),
             'centerness': losses.bce(),
         },
@@ -167,32 +174,44 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
         callbacks.append(evaluation)
 
     # save the model
-    if args.snapshots:
-        # ensure directory created first; otherwise h5py will error after epoch.
-        makedirs(args.snapshot_path)
-        checkpoint = keras.callbacks.ModelCheckpoint(
-            os.path.join(
-                args.snapshot_path,
-                '{backbone}_{dataset_type}_{{epoch:02d}}.h5'.format(backbone=args.backbone,
-                                                                    dataset_type=args.dataset_type)
-            ),
-            verbose=1,
-            # save_best_only=True,
-            # monitor="mAP",
-            # mode='max'
+    # ensure directory created first; otherwise h5py will error after epoch.
+    makedirs(args.snapshot_path)
+    checkpoint = keras.callbacks.ModelCheckpoint(
+        os.path.join(
+            args.snapshot_path,
+            f'{args.backbone}_{args.dataset_type}.h5'
+        ),
+        verbose=True,
+        save_best_only=True,
+        #save_weights_only=True,
+        monitor="mAP",
+        mode='max'
+    )
+    checkpoint = RedirectModel(checkpoint, model)
+    callbacks.append(checkpoint)
+    
+    callbacks.append(
+        keras.callbacks.CSVLogger(
+            filename = os.path.join(args.snapshot_path, f'{args.backbone}_{args.dataset_type}.csv')
         )
-        checkpoint = RedirectModel(checkpoint, model)
-        callbacks.append(checkpoint)
-
-    callbacks.append(keras.callbacks.ReduceLROnPlateau(
-        monitor='loss',
-        factor=0.1,
-        patience=2,
-        verbose=1,
-        mode='auto',
-        min_delta=0.0001,
-        cooldown=0,
-        min_lr=0
+    )
+    
+    #callbacks.append(
+    #    keras.callbacks.EarlyStopping(
+    #        monitor='val_loss', mode='min', patience=10
+    #    )
+    #)
+    
+    callbacks.append(
+        keras.callbacks.ReduceLROnPlateau(
+            monitor='loss',
+            factor=0.5,
+            patience=2,
+            verbose=1,
+            mode='auto',
+            min_delta=0.0001,
+            cooldown=0,
+            min_lr=0
     ))
 
     return callbacks
@@ -369,6 +388,8 @@ def parse_args(args):
                         action='store_true')
     parser.add_argument('--compute-val-loss', help='Compute validation loss during training', dest='compute_val_loss',
                         action='store_true')
+    parser.add_argument('--loss', help='Loss function to the regression loss.', default='iou', type=str)
+    parser.add_argument('--loss_weight', help='Weight for regression loss function.', default=1.0, type=float)
 
     # Fit generator arguments
     parser.add_argument('--multiprocessing', help='Use multiprocessing in fit_generator.', action='store_true')
@@ -380,25 +401,9 @@ def parse_args(args):
 
 
 def main(args=None):
-    # parse arguments
-    if args is None:
-        args = sys.argv[1:]
-    args = parse_args(args)
 
     # create object that stores backbone information
     backbone = models.backbone(args.backbone)
-
-    # make sure keras is the minimum required version
-    check_keras_version()
-
-    # optionally choose specific GPU
-    if args.gpu:
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    keras.backend.tensorflow_backend.set_session(get_session())
-
-    # optionally load config parameters
-    if args.config:
-        args.config = read_config_file(args.config)
 
     # create the generators
     train_generator, validation_generator = create_generators(args, backbone.preprocess_image)
@@ -419,9 +424,10 @@ def main(args=None):
                 'classification': losses.focal(),
                 'centerness': losses.bce(),
             },
-            optimizer=keras.optimizers.adam(lr=1e-5)
+            optimizer=keras.optimizers.Adam(lr=1e-5)
             # optimizer=keras.optimizers.sgd(lr=1e-5, momentum=0.9, decay=1e-5, nesterov=True)
         )
+
     else:
         weights = args.weights
         # default to imagenet if nothing else is specified
@@ -436,8 +442,19 @@ def main(args=None):
             num_gpus=args.num_gpus,
             freeze_backbone=args.freeze_backbone,
             lr=args.lr,
-            config=args.config
+            config=args.config,
+            args=args
         )
+
+    parallel_model = multi_gpu_model(training_model, gpus=2)
+    parallel_model.compile(
+        loss={
+            'regression': losses.iou(),
+            'classification': losses.focal(),
+            'centerness': losses.bce(),
+        },
+        optimizer=keras.optimizers.Adam(lr=1e-4)
+    )
 
     # print model summary
     # print(model.summary())
@@ -461,16 +478,12 @@ def main(args=None):
         validation_generator = None
 
     # start training
-    return training_model.fit_generator(
+    parallel_model.fit_generator(
         generator=train_generator,
-        initial_epoch=0,
-        steps_per_epoch=args.steps,
+        steps_per_epoch=len(train_generator),
         epochs=args.epochs,
         verbose=1,
         callbacks=callbacks,
-        workers=args.workers,
-        use_multiprocessing=args.multiprocessing,
-        max_queue_size=args.max_queue_size,
         validation_data=validation_generator
     )
 
