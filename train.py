@@ -114,8 +114,8 @@ def create_models(backbone_retinanet, num_classes, weights, args, num_gpus=0, fr
                                    weights=weights, skip_mismatch=True)
         training_model = model
 
-    # make prediction model
-    prediction_model = retinanet_bbox(model=model)
+    # TODO: make prediction model
+    prediction_model = None #retinanet_bbox(model=model)
 
     # compile model
     training_model.compile(
@@ -261,6 +261,7 @@ def create_generators(args, preprocess_image):
         train_generator = CSVGenerator(
             args.annotations_path,
             args.classes_path,
+            base_dir=args.base_dir_train,
             transform_generator=transform_generator,
             visual_effect_generator=visual_effect_generator,
             **common_args
@@ -347,8 +348,9 @@ def parse_args(args):
     pascal_parser.add_argument('pascal_path', help='Path to dataset directory (ie. /tmp/VOCdevkit).')
 
     csv_parser = subparsers.add_parser('csv')
-    csv_parser.add_argument('annotations_path', help='Path to CSV file containing annotations for training.')
-    csv_parser.add_argument('classes_path', help='Path to a CSV file containing class label mapping.')
+    csv_parser.add_argument('--annotations_path', help='Path to CSV file containing annotations for training.')
+    csv_parser.add_argument('--classes_path', help='Path to a CSV file containing class label mapping.')
+    csv_parser.add_argument('--base_dir_train', help='Path to images for training.')
     csv_parser.add_argument('--val-annotations-path',
                             help='Path to CSV file containing annotations for validation (optional).')
 
@@ -449,7 +451,7 @@ def main(args=None):
     parallel_model = multi_gpu_model(training_model, gpus=2)
     parallel_model.compile(
         loss={
-            'regression': losses.iou(),
+            'regression': losses.iou_loss(args.loss, args.loss_weight),
             'classification': losses.focal(),
             'centerness': losses.bce(),
         },

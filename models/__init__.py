@@ -20,7 +20,6 @@ class Backbone(object):
             'ClipBoxes': layers.ClipBoxes,
             '_focal': losses.focal(),
             'bce_': losses.bce(),
-            'iou_': losses.iou(),
         }
 
         self.backbone = backbone

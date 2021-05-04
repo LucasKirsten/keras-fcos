@@ -193,8 +193,9 @@ class RegressBoxes(keras.layers.Layer):
         y1 = locations[:, :, 1] - regression[:, :, 1]
         x2 = locations[:, :, 0] + regression[:, :, 2]
         y2 = locations[:, :, 1] + regression[:, :, 3]
-        # (batch_size, num_locations, 4)
-        bboxes = K.stack([x1, y1, x2, y2], axis=-1)
+        angle = regression[:, :, 4]
+        # (batch_size, num_locations, 5)
+        bboxes = K.stack([x1, y1, x2, y2, angle], axis=-1)
         return bboxes
 
     def compute_output_shape(self, input_shape):

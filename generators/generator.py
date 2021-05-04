@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import cv2
 import numpy as np
 import random
 import warnings
@@ -237,18 +238,6 @@ class Generator(keras.utils.Sequence):
             if len(small_indices):
                 for k in annotations_group[index].keys():
                     annotations_group[index][k] = np.delete(annotations[k], small_indices, axis=0)
-                # import cv2
-                # for invalid_index in small_indices:
-                #     x1, y1, x2, y2 = annotations['bboxes'][invalid_index]
-                #     label = annotations['labels'][invalid_index]
-                #     class_name = self.labels[label]
-                #     print('width: {}'.format(x2 - x1))
-                #     print('height: {}'.format(y2 - y1))
-                #     cv2.rectangle(image, (int(round(x1)), int(round(y1))), (int(round(x2)), int(round(y2))), (0, 255, 0), 2)
-                #     cv2.putText(image, class_name, (int(round(x1)), int(round(y1))), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 1)
-                # cv2.namedWindow('image', cv2.WINDOW_NORMAL)
-                # cv2.imshow('image', image)
-                # cv2.waitKey(0)
             if annotations_group[index]['bboxes'].shape[0] != 0:
                 filtered_image_group.append(image)
                 filtered_annotations_group.append(annotations_group[index])
@@ -310,7 +299,7 @@ class Generator(keras.utils.Sequence):
             # Transform the bounding boxes in the annotations.
             annotations['bboxes'] = annotations['bboxes'].copy()
             for index in range(annotations['bboxes'].shape[0]):
-                annotations['bboxes'][index, :] = transform_aabb(transform, annotations['bboxes'][index, :])
+                annotations['bboxes'][index, :4] = transform_aabb(transform, annotations['bboxes'][index, :4])
 
         return image, annotations
 
@@ -332,11 +321,8 @@ class Generator(keras.utils.Sequence):
         """
         Resize an image using image_min_side and image_max_side.
         """
-        # random_side_index = random.randint(0, 4)
-        # return resize_image(image,
-        #                     min_side=self.image_min_sides[random_side_index],
-        #                     max_side=self.image_max_sides[random_side_index])
-        return resize_image(image, min_side=self.image_min_side, max_side=self.image_max_side)
+        # TODO: allow other input sizes
+        return cv2.resize(image, (self.image_min_side,self.image_min_side)), 1.0 #resize_image(image, min_side=self.image_min_side, max_side=self.image_max_side)
 
     def preprocess_group_entry(self, image, annotations):
         """
@@ -431,11 +417,12 @@ class Generator(keras.utils.Sequence):
         interest_sizes = self.compute_interest_sizes(num_locations_each_layer)
         batch_size = len(image_group)
         num_classes = self.num_classes()
-        batch_regression = np.zeros((batch_size, locations.shape[0], 4 + 1 + 1), dtype=keras.backend.floatx())
+        batch_regression = np.zeros((batch_size, locations.shape[0], 4 + 1 + 1 + 1), dtype=keras.backend.floatx()) # + 1 to angle
         batch_classification = np.zeros((batch_size, locations.shape[0], num_classes + 1), dtype=keras.backend.floatx())
         batch_centerness = np.zeros((batch_size, locations.shape[0], 1 + 1), dtype=keras.backend.floatx())
         # (m, ), (m, )
         cx, cy = locations[:, 0], locations[:, 1]
+        ca = np.zeros_like(cx)
         for batch_item_id, annotations in enumerate(annotations_group):
             # (n, 4)
             bboxes = annotations['bboxes']
@@ -483,6 +470,8 @@ class Generator(keras.utils.Sequence):
             pos_location_labels = location_labels[pos_location_indices]
             batch_regression[batch_item_id, :, :4] = regr_targets
             batch_regression[batch_item_id, :, 4] = centerness_targets
+            angles = ca[:, None] + bboxes[:, -1][None]
+            batch_regression[batch_item_id, :, 5] = angles[:,0] # add angle
             batch_regression[batch_item_id, pos_location_indices, -1] = 1
             batch_classification[batch_item_id, pos_location_indices, pos_location_labels] = 1
             batch_classification[batch_item_id, pos_location_indices, -1] = 1
@@ -502,21 +491,21 @@ class Generator(keras.utils.Sequence):
         image_group = self.load_image_group(group)
         annotations_group = self.load_annotations_group(group)
 
-        # check validity of annotations
-        image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
-
-        # randomly apply visual effect
-        image_group, annotations_group = self.random_visual_effect_group(image_group, annotations_group)
-
-        # randomly transform data
-        image_group, annotations_group = self.random_transform_group(image_group, annotations_group)
-
-        # check validity of annotations
-        image_group, annotations_group = self.clip_transformed_annotations(image_group, annotations_group, group)
-
-        if len(image_group) == 0:
-            return None, None
-
+        ## check validity of annotations
+        #image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
+        #
+        ## randomly apply visual effect
+        #image_group, annotations_group = self.random_visual_effect_group(image_group, annotations_group)
+        #
+        ## randomly transform data
+        #image_group, annotations_group = self.random_transform_group(image_group, annotations_group)
+        #
+        ## check validity of annotations
+        #image_group, annotations_group = self.clip_transformed_annotations(image_group, annotations_group, group)
+        #
+        #if len(image_group) == 0:
+        #    return None, None
+        #
         # perform preprocessing steps
         image_group, annotations_group = self.preprocess_group(image_group, annotations_group)
 
@@ -539,7 +528,7 @@ class Generator(keras.utils.Sequence):
         annotations_group = self.load_annotations_group(group)
 
         # check validity of annotations
-        image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
+        #image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
 
         # randomly apply visual effect
         # image_group, annotations_group = self.random_visual_effect_group(image_group, annotations_group)
