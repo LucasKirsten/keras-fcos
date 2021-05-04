@@ -169,7 +169,7 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
             evaluation = CocoEval(validation_generator, tensorboard=tensorboard_callback)
         else:
             evaluation = Evaluate(validation_generator, tensorboard=tensorboard_callback,
-                                  weighted_average=args.weighted_average)
+                                  weighted_average=args.weighted_average, method='piou' if 'piou' in args.loss else 'iou')
         evaluation = RedirectModel(evaluation, prediction_model)
         callbacks.append(evaluation)
 
@@ -420,7 +420,7 @@ def main(args=None):
         # compile model
         training_model.compile(
             loss={
-                'regression': losses.iou(),
+                'regression': losses.iou_loss(args.loss, args.loss_weight),
                 'classification': losses.focal(),
                 'centerness': losses.bce(),
             },
@@ -449,7 +449,7 @@ def main(args=None):
     parallel_model = multi_gpu_model(training_model, gpus=2)
     parallel_model.compile(
         loss={
-            'regression': losses.iou(),
+            'regression': losses.iou_loss(args.loss, args.loss_weight),
             'classification': losses.focal(),
             'centerness': losses.bce(),
         },

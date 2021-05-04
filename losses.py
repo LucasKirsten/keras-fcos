@@ -272,6 +272,11 @@ def calc_iou_giou(mode, y_regr_true, y_regr_pred):
     w_intersect = tf.minimum(pred_left, target_left) + tf.minimum(pred_right, target_right)
     h_intersect = tf.minimum(pred_bottom, target_bottom) + tf.minimum(pred_top, target_top)
     
+    area_intersect = w_intersect * h_intersect
+    area_union = target_area + pred_area - area_intersect
+
+    # (num_pos, )
+    intersection_over_union = (area_intersect + 1.0) / (area_union + 1.0)
     if mode == 'giou':
         # smallest enclosing box
         x1c = tf.maximum(pred_left, target_left)
@@ -280,14 +285,8 @@ def calc_iou_giou(mode, y_regr_true, y_regr_pred):
         y2c = tf.minimum(pred_bottom, target_bottom)
 
         Ac = (x2c - x1c) * (y2c - y1c)
-
-    area_intersect = w_intersect * h_intersect
-    area_union = target_area + pred_area - area_intersect
-
-    # (num_pos, )
-    intersection_over_union = (area_intersect + 1.0) / (area_union + 1.0)
-    if mode == 'giou':
-        intersection_over_union = intersection_over_union - (Ac - area_union)/Ac
+        
+        intersection_over_union = intersection_over_union - (Ac - area_union)/(Ac + EPS)
         
     return 1. - intersection_over_union
 

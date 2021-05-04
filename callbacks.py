@@ -17,7 +17,8 @@ class Evaluate(keras.callbacks.Callback):
             save_path=None,
             tensorboard=None,
             weighted_average=False,
-            verbose=1
+            verbose=1,
+            method='iou'
     ):
         """
         Evaluate a given dataset using a given model at the end of every epoch during training.
@@ -40,6 +41,8 @@ class Evaluate(keras.callbacks.Callback):
         self.tensorboard = tensorboard
         self.weighted_average = weighted_average
         self.verbose = verbose
+        self.method = method
+        print('Evaluating model using ', method)
 
         super(Evaluate, self).__init__()
 
@@ -55,7 +58,7 @@ class Evaluate(keras.callbacks.Callback):
             max_detections=self.max_detections,
             save_path=self.save_path,
             epoch=epoch,
-            method='piou'
+            method=self.method
         )
 
         # compute per class average precision
