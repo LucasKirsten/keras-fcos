@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import keras
-import keras.backend as K
+from tensorflow.compat.v1 import keras
+import tensorflow.compat.v1.keras.backend as K
 import initializers
 import layers
 from utils.anchors import AnchorParameters

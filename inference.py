@@ -1,5 +1,5 @@
 # import keras
-import keras
+from tensorflow.compat.v1 import keras
 import models
 from utils.image import read_image_bgr, preprocess_image, resize_image
 from utils.visualization import draw_box, draw_caption

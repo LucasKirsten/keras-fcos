@@ -16,7 +16,7 @@ limitations under the License.
 
 from __future__ import print_function
 
-import keras
+from tensorflow.compat.v1 import keras
 import sys
 
 minimum_keras_version = 2, 2, 4

@@ -15,8 +15,8 @@ limitations under the License.
 """
 
 import math
-import tensorflow as tf
-import keras.backend as K
+import tensorflow.compat.v1 as tf
+import tensorflow.compat.v1.keras.backend as K
 
 def focal(alpha=0.25, gamma=2.0):
     """
@@ -284,9 +284,11 @@ def calc_iou_giou(mode, y_regr_true, y_regr_pred):
         y1c = tf.maximum(pred_top, target_top)
         y2c = tf.minimum(pred_bottom, target_bottom)
 
-        Ac = (x2c - x1c) * (y2c - y1c)
+        Ac = tf.abs((x2c - x1c) * (y2c - y1c))
         
-        intersection_over_union = intersection_over_union - (Ac - area_union)/(Ac + EPS)
+        sub_area = (Ac - area_union)/Ac
+        sub_area = tf.where(tf.less(sub_area,EPS), tf.zeros_like(sub_area), sub_area)
+        intersection_over_union = intersection_over_union - sub_area
         
     return 1. - intersection_over_union
 
@@ -316,7 +318,7 @@ def iou_loss(mode, weight, freeze_iterations=0):
             loss = calc_iou_giou(mode, y_regr_true, y_regr_pred)
         
         loss = tf.cast(weight, 'float32') * loss
-        loss = tf.reduce_sum(loss * y_centerness_true) / (tf.reduce_sum(y_centerness_true) + 1e-8)
+        loss = tf.reduce_sum(loss * y_centerness_true) / (tf.reduce_sum(y_centerness_true) + EPS)
         return loss
 
     return _iou

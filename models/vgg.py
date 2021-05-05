@@ -15,8 +15,8 @@ limitations under the License.
 """
 
 
-import keras
-from keras.utils import get_file
+from tensorflow.compat.v1 import keras
+from tensorflow.compat.v1.keras.utils import get_file
 
 from . import retinanet
 from . import Backbone

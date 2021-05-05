@@ -16,7 +16,7 @@ limitations under the License.
 
 from pycocotools.cocoeval import COCOeval
 
-import keras
+from tensorflow.compat.v1 import keras
 import numpy as np
 import json
 

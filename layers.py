@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import keras
-import keras.backend as K
+from tensorflow.compat.v1 import keras
+import tensorflow.compat.v1.keras.backend as K
 from utils import anchors as utils_anchors
 import utils_graph
 
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 
 
 class Anchors(keras.layers.Layer):

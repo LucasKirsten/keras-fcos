@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import keras.backend as K
-import tensorflow as tf
+import tensorflow.compat.v1.keras.backend as K
+import tensorflow.compat.v1 as tf
 
 
 def bbox_transform_inv(boxes, deltas, mean=None, std=None):

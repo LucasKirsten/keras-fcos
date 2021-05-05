@@ -21,10 +21,9 @@ import os
 import sys
 import warnings
 
-import keras
-import keras.preprocessing.image
-from keras.utils import multi_gpu_model
-import tensorflow as tf
+from tensorflow.compat.v1 import keras
+from tensorflow.compat.v1.keras.preprocessing import image
+import tensorflow.compat.v1 as tf
 from datetime import date
 
 import losses
@@ -44,7 +43,7 @@ def seed_everything(seed=33):
     import os, tensorflow as tf, numpy as np
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
-    tf.set_random_seed(seed)
+    tf.random.set_seed(seed)
 seed_everything()
 
 def makedirs(path):
@@ -81,7 +80,7 @@ def model_with_weights(model, weights, skip_mismatch):
     return model
 
 
-def create_models(backbone_retinanet, num_classes, weights, args, num_gpus=0, freeze_backbone=False, lr=1e-5, config=None):
+def create_models(backbone_retinanet, num_classes, weights, args, freeze_backbone=False, lr=1e-5, config=None):
     """
     Creates three models (model, training_model, prediction_model).
 
@@ -100,19 +99,10 @@ def create_models(backbone_retinanet, num_classes, weights, args, num_gpus=0, fr
     """
 
     modifier = freeze_model if freeze_backbone else None
-
-    # Keras recommends initialising a multi-gpu model on the CPU to ease weight sharing, and to prevent OOM errors.
-    # optionally wrap in a parallel model
-    if num_gpus > 1:
-        from keras.utils import multi_gpu_model
-        with tf.device('/cpu:0'):
-            model = model_with_weights(backbone_retinanet(num_classes, modifier=modifier),
-                                       weights=weights, skip_mismatch=True)
-        training_model = multi_gpu_model(model, gpus=num_gpus)
-    else:
-        model = model_with_weights(backbone_retinanet(num_classes, modifier=modifier),
-                                   weights=weights, skip_mismatch=True)
-        training_model = model
+    
+    model = model_with_weights(backbone_retinanet(num_classes, modifier=modifier),
+                               weights=weights, skip_mismatch=True)
+    training_model = model
 
     # make prediction model
     prediction_model = retinanet_bbox(model=model)
@@ -124,7 +114,7 @@ def create_models(backbone_retinanet, num_classes, weights, args, num_gpus=0, fr
             'classification': losses.focal(),
             'centerness': losses.bce(),
         },
-        optimizer=keras.optimizers.adam(lr=lr)
+        optimizer=keras.optimizers.Adam(lr=lr)
     )
 
     return model, training_model, prediction_model
@@ -147,20 +137,20 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
 
     tensorboard_callback = None
 
-    if args.tensorboard_dir:
-        makedirs(args.tensorboard_dir)
-        tensorboard_callback = keras.callbacks.TensorBoard(
-            log_dir=args.tensorboard_dir,
-            histogram_freq=0,
-            batch_size=args.batch_size,
-            write_graph=True,
-            write_grads=False,
-            write_images=False,
-            embeddings_freq=0,
-            embeddings_layer_names=None,
-            embeddings_metadata=None
-        )
-        callbacks.append(tensorboard_callback)
+    #if args.tensorboard_dir:
+    #    makedirs(args.tensorboard_dir)
+    #    tensorboard_callback = keras.callbacks.TensorBoard(
+    #        log_dir=args.tensorboard_dir,
+    #        histogram_freq=0,
+    #        batch_size=args.batch_size,
+    #        write_graph=True,
+    #        write_grads=False,
+    #        write_images=False,
+    #        embeddings_freq=0,
+    #        embeddings_layer_names=None,
+    #        embeddings_metadata=None
+    #    )
+    #    callbacks.append(tensorboard_callback)
 
     if args.evaluation and validation_generator:
         if args.dataset_type == 'coco':
@@ -407,16 +397,41 @@ def main(args=None):
 
     # create the generators
     train_generator, validation_generator = create_generators(args, backbone.preprocess_image)
+    
+    if len(tf.config.experimental.list_physical_devices('GPU'))>1:
+        strategy = tf.distribute.MirroredStrategy()
+        print('Using multiple gpu...')
+    else:
+        strategy = tf.distribute.get_strategy()
 
     # create the model
-    if args.snapshot is not None:
-        print('Loading model, this may take a second...')
-        model = models.load_model(args.snapshot, backbone_name=args.backbone)
-        training_model = model
-        anchor_params = None
-        if args.config and 'anchor_parameters' in args.config:
-            anchor_params = parse_anchor_parameters(args.config)
-        prediction_model = retinanet_bbox(model=model, anchor_params=anchor_params)
+    with strategy.scope():
+        if args.snapshot is not None:
+            print('Loading model, this may take a second...')
+            model = models.load_model(args.snapshot, backbone_name=args.backbone)
+            training_model = model
+            anchor_params = None
+            if args.config and 'anchor_parameters' in args.config:
+                anchor_params = parse_anchor_parameters(args.config)
+            prediction_model = retinanet_bbox(model=model, anchor_params=anchor_params)
+
+        else:
+            weights = args.weights
+            # default to imagenet if nothing else is specified
+            if weights is None and args.imagenet_weights:
+                weights = backbone.download_imagenet()
+
+            print('Creating model, this may take a second...')
+            model, training_model, prediction_model = create_models(
+                backbone_retinanet=backbone.retinanet,
+                num_classes=train_generator.num_classes(),
+                weights=weights,
+                freeze_backbone=args.freeze_backbone,
+                lr=args.lr,
+                config=args.config,
+                args=args
+            )
+        
         # compile model
         training_model.compile(
             loss={
@@ -424,46 +439,14 @@ def main(args=None):
                 'classification': losses.focal(),
                 'centerness': losses.bce(),
             },
-            optimizer=keras.optimizers.Adam(lr=1e-5)
-            # optimizer=keras.optimizers.sgd(lr=1e-5, momentum=0.9, decay=1e-5, nesterov=True)
+            optimizer=keras.optimizers.Adam(lr=args.lr)
         )
 
-    else:
-        weights = args.weights
-        # default to imagenet if nothing else is specified
-        if weights is None and args.imagenet_weights:
-            weights = backbone.download_imagenet()
-
-        print('Creating model, this may take a second...')
-        model, training_model, prediction_model = create_models(
-            backbone_retinanet=backbone.retinanet,
-            num_classes=train_generator.num_classes(),
-            weights=weights,
-            num_gpus=args.num_gpus,
-            freeze_backbone=args.freeze_backbone,
-            lr=args.lr,
-            config=args.config,
-            args=args
-        )
-
-    parallel_model = multi_gpu_model(training_model, gpus=2)
-    parallel_model.compile(
-        loss={
-            'regression': losses.iou_loss(args.loss, args.loss_weight),
-            'classification': losses.focal(),
-            'centerness': losses.bce(),
-        },
-        optimizer=keras.optimizers.Adam(lr=1e-4)
-    )
-
-    # print model summary
-    # print(model.summary())
-
-    # this lets the generator compute backbone layer shapes using the actual backbone model
-    if 'vgg' in args.backbone or 'densenet' in args.backbone:
-        train_generator.compute_shapes = make_shapes_callback(model)
-        if validation_generator:
-            validation_generator.compute_shapes = train_generator.compute_shapes
+        # this lets the generator compute backbone layer shapes using the actual backbone model
+        if 'vgg' in args.backbone or 'densenet' in args.backbone:
+            train_generator.compute_shapes = make_shapes_callback(model)
+            if validation_generator:
+                validation_generator.compute_shapes = train_generator.compute_shapes
 
     # create the callbacks
     callbacks = create_callbacks(
@@ -478,7 +461,7 @@ def main(args=None):
         validation_generator = None
 
     # start training
-    parallel_model.fit_generator(
+    training_model.fit_generator(
         generator=train_generator,
         steps_per_epoch=len(train_generator),
         epochs=args.epochs,

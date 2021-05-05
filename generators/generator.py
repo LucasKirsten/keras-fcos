@@ -18,7 +18,7 @@ import numpy as np
 import random
 import warnings
 
-import keras
+from tensorflow.compat.v1 import keras
 
 from utils.anchors import (
     anchors_for_shape,

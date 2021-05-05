@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import keras
-from keras.applications import densenet
-from keras.utils import get_file
+from tensorflow.compat.v1 import keras
+from tensorflow.compat.v1.keras.applications import densenet
+from tensorflow.compat.v1.keras.utils import get_file
 
 from . import retinanet
 from . import Backbone

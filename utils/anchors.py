@@ -1,5 +1,5 @@
 import numpy as np
-import keras
+from tensorflow.compat.v1 import keras
 
 from utils.compute_overlap import compute_overlap
 
